@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>three-vrm - AI Talking Avatar</title>
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no"
+		/>
+		<style>
+			body {
+				margin: 0;
+				overflow: hidden;
+				font-family: 'Segoe UI', sans-serif;
+			}
+			canvas {
+				display: block;
+			}
+			#ui {
+				position: fixed;
+				bottom: 20px;
+				left: 50%;
+				transform: translateX(-50%);
+				display: flex;
+				gap: 10px;
+				align-items: center;
+				z-index: 100;
+			}
+			#chatInput {
+				width: 400px;
+				padding: 12px 16px;
+				border: 2px solid #6c63ff;
+				border-radius: 25px;
+				font-size: 14px;
+				outline: none;
+				background: rgba(255,255,255,0.95);
+			}
+			#chatInput:focus {
+				border-color: #4a42d4;
+				box-shadow: 0 0 10px rgba(108,99,255,0.3);
+			}
+			#sendBtn {
+				padding: 12px 24px;
+				background: #6c63ff;
+				color: white;
+				border: none;
+				border-radius: 25px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: bold;
+			}
+			#sendBtn:hover {
+				background: #4a42d4;
+			}
+			#micBtn {
+				width: 50px;
+				height: 50px;
+				border-radius: 50%;
+				background: #ff4444;
+				border: none;
+				cursor: pointer;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				transition: all 0.2s;
+			}
+			#micBtn:hover {
+				background: #cc3333;
+				transform: scale(1.1);
+			}
+			#micBtn.recording {
+				background: #ff0000;
+				animation: pulse 1s infinite;
+			}
+			#micBtn svg {
+				width: 24px;
+				height: 24px;
+				fill: white;
+			}
+			@keyframes pulse {
+				0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,0,0,0.4); }
+				50% { transform: scale(1.05); box-shadow: 0 0 20px 5px rgba(255,0,0,0.3); }
+			}
+			#chatBox {
+				position: fixed;
+				bottom: 80px;
+				left: 50%;
+				transform: translateX(-50%);
+				width: 480px;
+				max-height: 300px;
+				overflow-y: auto;
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				padding: 12px;
+				z-index: 100;
+			}
+			.chatMsg {
+				padding: 10px 14px;
+				border-radius: 14px;
+				font-size: 14px;
+				line-height: 1.4;
+				max-width: 80%;
+				animation: fadeIn 0.3s ease;
+			}
+			.chatMsg.user {
+				align-self: flex-end;
+				background: #6c63ff;
+				color: white;
+				border-bottom-right-radius: 4px;
+			}
+			.chatMsg.bot {
+				align-self: flex-start;
+				background: rgba(255,255,255,0.95);
+				color: #333;
+				border-bottom-left-radius: 4px;
+				box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+			}
+			@keyframes fadeIn {
+				from { opacity: 0; transform: translateY(10px); }
+				to { opacity: 1; transform: translateY(0); }
+			}
+			#status {
+				position: fixed;
+				bottom: 80px;
+				left: 50%;
+				transform: translateX(-50%);
+				font-size: 12px;
+				color: #666;
+				background: rgba(255,255,255,0.8);
+				padding: 4px 12px;
+				border-radius: 10px;
+				display: none;
+				z-index: 100;
+			}
+		</style>
+	</head>
+
+	<body>
+		<div id="chatBox"></div>
+		<div id="status"></div>
+		<div id="ui">
+			<button id="micBtn">
+				<svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+			</button>
+			<input id="chatInput" type="text" placeholder="Type or hold mic to talk..." />
+			<button id="sendBtn">Send</button>
+		</div>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"fflate": "https://cdn.jsdelivr.net/npm/fflate@0.7.4/esm/browser.js",
+					"three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+					"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+					"@pixiv/three-vrm": "./lib/three-vrm.module.js"
+				}
+			}
+		</script>
+
+		<script type="module">
+			import * as THREE from 'three';
+			import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+			import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+			import { loadMixamoAnimation } from './loadMixamoAnimation.js';
+
+			// === API KEYS (replace with your own) ===
+			const ELEVEN_LABS_API_KEY = 'YOUR_ELEVENLABS_API_KEY';
+			const ELEVEN_LABS_VOICE_ID = 'YOUR_ELEVENLABS_VOICE_ID';
+			const GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY';
+			const GEMINI_MODEL = 'gemini-2.5-flash';
+
+			// === RENDERER ===
+			const renderer = new THREE.WebGLRenderer( { antialias: true } );
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			renderer.setPixelRatio( window.devicePixelRatio );
+			renderer.toneMapping = THREE.ACESFilmicToneMapping;
+			document.body.appendChild( renderer.domElement );
+
+			// === CAMERA ===
+			const camera = new THREE.PerspectiveCamera( 30.0, window.innerWidth / window.innerHeight, 0.1, 20.0 );
+			camera.position.set( 0.0, 1.35, 2.5 );
+
+			const controls = new OrbitControls( camera, renderer.domElement );
+			controls.screenSpacePanning = true;
+			controls.target.set( 0.0, 1.2, 0.0 );
+			controls.update();
+
+			// === SCENE ===
+			const scene = new THREE.Scene();
+			scene.background = new THREE.Color( 0x87ceeb );
+
+			// football pitch
+			const fieldGeometry = new THREE.PlaneGeometry( 60, 40 );
+			const fieldMaterial = new THREE.MeshStandardMaterial( { color: 0x2d8a2d } );
+			const field = new THREE.Mesh( fieldGeometry, fieldMaterial );
+			field.rotation.x = -Math.PI / 2;
+			scene.add( field );
+
+			for ( let i = -6; i <= 6; i++ ) {
+
+				const stripeGeo = new THREE.PlaneGeometry( 60, 3 );
+				const stripeMat = new THREE.MeshStandardMaterial( {
+					color: i % 2 === 0 ? 0x339933 : 0x2d8a2d,
+				} );
+				const stripe = new THREE.Mesh( stripeGeo, stripeMat );
+				stripe.rotation.x = -Math.PI / 2;
+				stripe.position.set( 0, 0.01, i * 3 );
+				scene.add( stripe );
+
+			}
+
+			const lineMaterial = new THREE.MeshBasicMaterial( { color: 0xffffff } );
+
+			const centerLineGeo = new THREE.PlaneGeometry( 0.12, 40 );
+			const centerLine = new THREE.Mesh( centerLineGeo, lineMaterial );
+			centerLine.rotation.x = -Math.PI / 2;
+			centerLine.position.y = 0.02;
+			scene.add( centerLine );
+
+			const circleGeo = new THREE.RingGeometry( 4.5, 4.62, 64 );
+			const centerCircle = new THREE.Mesh( circleGeo, lineMaterial );
+			centerCircle.rotation.x = -Math.PI / 2;
+			centerCircle.position.y = 0.02;
+			scene.add( centerCircle );
+
+			// ball
+			const ballGeo = new THREE.SphereGeometry( 0.22, 16, 16 );
+			const ballMat = new THREE.MeshStandardMaterial( { color: 0xffffff, roughness: 0.4 } );
+			const ball = new THREE.Mesh( ballGeo, ballMat );
+			ball.position.set( 1.5, 0.22, 0.5 );
+			scene.add( ball );
+
+			// lights
+			const ambientLight = new THREE.AmbientLight( 0xffffff, 0.6 );
+			scene.add( ambientLight );
+
+			const dirLight = new THREE.DirectionalLight( 0xffffff, Math.PI * 0.8 );
+			dirLight.position.set( 1.0, 1.5, 2.0 ).normalize();
+			scene.add( dirLight );
+
+			const fillLight = new THREE.DirectionalLight( 0x8888ff, Math.PI * 0.3 );
+			fillLight.position.set( -1.0, 0.5, -1.0 ).normalize();
+			scene.add( fillLight );
+
+			// === STATE ===
+			let currentVrm = undefined;
+			let currentMixer = undefined;
+			let isTalking = false;
+			let currentEmotion = 'neutral';
+			let emotionIntensity = 0;
+			let targetEmotionIntensity = 0;
+			const chatHistory = [];
+
+			// === LOADER ===
+			const loader = new GLTFLoader();
+			loader.crossOrigin = 'anonymous';
+			loader.register( ( parser ) => new VRMLoaderPlugin( parser, { autoUpdateHumanBones: true } ) );
+
+			function load( url ) {
+
+				loader.load(
+					url,
+					( gltf ) => {
+
+						const vrm = gltf.userData.vrm;
+
+						VRMUtils.removeUnnecessaryVertices( gltf.scene );
+						VRMUtils.combineSkeletons( gltf.scene );
+						VRMUtils.combineMorphs( vrm );
+
+						if ( currentVrm ) {
+
+							scene.remove( currentVrm.scene );
+							VRMUtils.deepDispose( currentVrm.scene );
+
+						}
+
+						vrm.scene.traverse( ( obj ) => { obj.frustumCulled = false; } );
+
+						currentVrm = vrm;
+						scene.add( vrm.scene );
+						VRMUtils.rotateVRM0( vrm );
+
+						setupIdleAnimation( vrm );
+						preloadWalkClip();
+						console.log( 'VRM loaded:', vrm );
+
+					},
+					( progress ) => console.log( 'Loading...', 100.0 * ( progress.loaded / progress.total ), '%' ),
+					( error ) => console.error( error )
+				);
+
+			}
+
+			load( './models/morocco_boy.vrm' );
+
+			// === IDLE ANIMATION (Mixamo FBX) ===
+			async function setupIdleAnimation( vrm ) {
+
+				currentMixer = new THREE.AnimationMixer( vrm.scene );
+
+				// load the standing idle FBX as default
+				const clip = await loadMixamoAnimation( './models/standing_idle.fbx', vrm );
+				idleAction = currentMixer.clipAction( clip );
+				idleAction.setLoop( THREE.LoopRepeat, Infinity );
+				idleAction.play();
+
+				// happy by default
+				if ( vrm.expressionManager ) {
+
+					vrm.expressionManager.setValue( 'happy', 0.4 );
+
+				}
+
+			}
+
+			// === GESTURE ANIMATIONS ===
+
+			// === BLINK ===
+			let blinkTimer = 0;
+			let blinkPhase = 0;
+			let blinkValue = 0;
+
+			function updateBlink( deltaTime ) {
+
+				if ( ! currentVrm || ! currentVrm.expressionManager ) return;
+
+				blinkTimer -= deltaTime;
+
+				if ( blinkPhase === 0 && blinkTimer <= 0 ) {
+
+					blinkPhase = 1;
+					blinkTimer = 0.06;
+
+				} else if ( blinkPhase === 1 ) {
+
+					blinkValue += deltaTime * 20;
+					if ( blinkValue >= 1.0 ) { blinkValue = 1.0; blinkPhase = 2; blinkTimer = 0.04; }
+
+				} else if ( blinkPhase === 2 ) {
+
+					blinkValue -= deltaTime * 15;
+					if ( blinkValue <= 0.0 ) { blinkValue = 0.0; blinkPhase = 0; blinkTimer = 2.0 + Math.random() * 4.0; }
+
+				}
+
+				currentVrm.expressionManager.setValue( 'blink', blinkValue );
+
+			}
+
+			// === LIP SYNC (audio-driven) ===
+			let audioContext = null;
+			let analyser = null;
+			let audioDataArray = null;
+			let smoothedVolume = 0;
+			let currentSourceNode = null;
+
+			function ensureAudioContext() {
+
+				if ( ! audioContext ) {
+
+					audioContext = new ( window.AudioContext || window.webkitAudioContext )();
+					analyser = audioContext.createAnalyser();
+					analyser.fftSize = 256;
+					analyser.smoothingTimeConstant = 0.4;
+					audioDataArray = new Uint8Array( analyser.frequencyBinCount );
+
+				}
+
+				if ( audioContext.state === 'suspended' ) {
+
+					audioContext.resume();
+
+				}
+
+			}
+
+			function playAudioWithAnalyser( audioBlob ) {
+
+				ensureAudioContext();
+
+				return new Promise( ( resolve ) => {
+
+					const reader = new FileReader();
+					reader.onload = () => {
+
+						audioContext.decodeAudioData( reader.result, ( buffer ) => {
+
+							// disconnect previous source
+							if ( currentSourceNode ) {
+
+								try { currentSourceNode.disconnect(); } catch ( e ) {}
+
+							}
+
+							const source = audioContext.createBufferSource();
+							source.buffer = buffer;
+							source.connect( analyser );
+							analyser.connect( audioContext.destination );
+							currentSourceNode = source;
+
+							source.onended = () => {
+
+								smoothedVolume = 0;
+								currentSourceNode = null;
+								resolve();
+
+							};
+
+							source.start( 0 );
+
+						}, ( err ) => {
+
+							console.error( 'Audio decode error:', err );
+							resolve();
+
+						} );
+
+					};
+
+					reader.readAsArrayBuffer( audioBlob );
+
+				} );
+
+			}
+
+			function updateLipSync( deltaTime ) {
+
+				if ( ! currentVrm || ! currentVrm.expressionManager ) return;
+
+				// reset mouth
+				currentVrm.expressionManager.setValue( 'aa', 0 );
+				currentVrm.expressionManager.setValue( 'oh', 0 );
+				currentVrm.expressionManager.setValue( 'ee', 0 );
+				currentVrm.expressionManager.setValue( 'ih', 0 );
+				currentVrm.expressionManager.setValue( 'ou', 0 );
+
+				if ( ! isTalking || ! analyser || ! currentSourceNode ) return;
+
+				// get audio frequency data
+				analyser.getByteFrequencyData( audioDataArray );
+
+				// split into frequency bands for different mouth shapes
+				const low = average( audioDataArray, 0, 8 ) / 255;
+				const mid = average( audioDataArray, 8, 32 ) / 255;
+				const high = average( audioDataArray, 32, 64 ) / 255;
+
+				// overall volume for smoothing
+				const volume = ( low + mid + high ) / 3;
+				smoothedVolume += ( volume - smoothedVolume ) * 0.3;
+
+				if ( smoothedVolume < 0.02 ) return;
+
+				// map frequency bands to visemes (reduced by 20%)
+				const aa = Math.min( 1.0, low * 2.0 );
+				const oh = Math.min( 1.0, mid * 1.4 );
+				const ee = Math.min( 1.0, high * 1.6 );
+
+				// blend between shapes based on dominant frequency
+				if ( low > mid && low > high ) {
+
+					currentVrm.expressionManager.setValue( 'aa', aa * 0.7 );
+					currentVrm.expressionManager.setValue( 'oh', oh * 0.2 );
+
+				} else if ( mid > low && mid > high ) {
+
+					currentVrm.expressionManager.setValue( 'oh', oh * 0.6 );
+					currentVrm.expressionManager.setValue( 'ee', ee * 0.2 );
+
+				} else {
+
+					currentVrm.expressionManager.setValue( 'ee', ee * 0.55 );
+					currentVrm.expressionManager.setValue( 'ih', high * 0.4 );
+
+				}
+
+			}
+
+			function average( arr, start, end ) {
+
+				let sum = 0;
+				for ( let i = start; i < end && i < arr.length; i++ ) sum += arr[ i ];
+				return sum / ( end - start );
+
+			}
+
+			// === GEMINI LLM WITH FUNCTION CALLING ===
+			const geminiTools = [
+				{
+					functionDeclarations: [
+						{
+							name: 'dance',
+							description: 'Make the avatar dance. Use when the user asks to dance, move, or celebrate.',
+							parameters: {
+								type: 'OBJECT',
+								properties: {
+									style: { type: 'STRING', enum: [ 'samba', 'gangnam' ], description: 'Dance style' },
+									duration: { type: 'NUMBER', description: 'Duration in seconds. Default 15. Use 0 for loop.' },
+									loop: { type: 'BOOLEAN', description: 'If true, loop infinitely.' },
+								},
+								required: [ 'style' ],
+							},
+						},
+						{
+							name: 'stop_dance',
+							description: 'Stop dancing and return to idle.',
+							parameters: { type: 'OBJECT', properties: {} },
+						},
+						{
+							name: 'change_dance',
+							description: 'Switch dance style without stopping.',
+							parameters: {
+								type: 'OBJECT',
+								properties: {
+									style: { type: 'STRING', enum: [ 'samba', 'gangnam' ] },
+									duration: { type: 'NUMBER' },
+									loop: { type: 'BOOLEAN' },
+								},
+								required: [ 'style' ],
+							},
+						},
+						{
+							name: 'do_action',
+							description: 'Perform a body action/gesture.',
+							parameters: {
+								type: 'OBJECT',
+								properties: {
+									action: { type: 'STRING', enum: [ 'wave', 'clap', 'sad', 'surprised', 'idle' ], description: 'Action to perform' },
+									duration: { type: 'NUMBER', description: 'Duration in seconds. Default 5.' },
+									loop: { type: 'BOOLEAN' },
+								},
+								required: [ 'action' ],
+							},
+						},
+						{
+							name: 'stop_action',
+							description: 'Stop the current action and return to idle.',
+							parameters: { type: 'OBJECT', properties: {} },
+						},
+						{
+							name: 'walk',
+							description: 'Walk in a direction then return to original position.',
+							parameters: {
+								type: 'OBJECT',
+								properties: {
+									direction: { type: 'STRING', enum: [ 'forward', 'backward', 'left', 'right' ] },
+									distance: { type: 'NUMBER', description: 'Distance in meters (1-10). Default 3.' },
+								},
+								required: [ 'direction' ],
+							},
+						},
+					],
+				},
+			];
+
+			const systemInstruction = `You are a normal young Moroccan guy in his 20s. You speak English and French naturally, mixing both like any young Moroccan would. Keep responses short (1-3 sentences). You're chill, friendly, and real — not a robot, not overly excited, just a normal dude having a conversation. You're standing on a football field. Talk naturally like you would with a friend — casual, relaxed, sometimes funny. Don't be formal. Don't sound like an AI.
+
+You have tools you can use:
+- dance: to dance (samba or gangnam)
+- stop_dance: to stop dancing
+- do_action: to perform a gesture (wave, clap, sad, surprised, idle)
+- stop_action: to stop the current action
+- walk: to walk (forward, backward, left, right) and come back
+
+Use tools naturally based on context. If someone shares good news, clap. If something is sad, be sad. If asked to dance, dance. If asked to stop, stop.`;
+
+			async function getGeminiResponse( userMessage ) {
+
+				chatHistory.push( { role: 'user', parts: [{ text: userMessage }] } );
+
+				const response = await fetch( `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify( {
+						system_instruction: { parts: [{ text: systemInstruction }] },
+						contents: chatHistory.slice( -10 ),
+						tools: geminiTools,
+						generationConfig: {
+							maxOutputTokens: 200,
+							temperature: 0.8,
+						},
+					} ),
+				} );
+
+				if ( ! response.ok ) {
+					const err = await response.text();
+					console.error( 'Gemini API error:', response.status, err );
+					throw new Error( 'Gemini API error: ' + response.status );
+				}
+
+				const data = await response.json();
+				const candidate = data.candidates[ 0 ];
+				const parts = candidate.content.parts;
+
+				// check for function calls
+				const functionCalls = parts.filter( p => p.functionCall );
+
+				if ( functionCalls.length > 0 ) {
+
+					const functionResponses = [];
+
+					for ( const part of functionCalls ) {
+
+						const funcName = part.functionCall.name;
+						const args = part.functionCall.args || {};
+
+						if ( funcName === 'dance' ) {
+
+							const duration = args.duration !== undefined ? args.duration : 15;
+							const loop = args.loop || false;
+							await startDance( args.style || 'samba', loop ? 0 : duration, loop );
+							functionResponses.push( { functionResponse: { name: funcName, response: { result: `Dancing: ${args.style}` } } } );
+
+						} else if ( funcName === 'stop_dance' ) {
+
+							stopDance();
+							functionResponses.push( { functionResponse: { name: funcName, response: { result: 'Stopped dancing' } } } );
+
+						} else if ( funcName === 'change_dance' ) {
+
+							const duration = args.duration !== undefined ? args.duration : 15;
+							const loop = args.loop || false;
+							await startDance( args.style || 'samba', loop ? 0 : duration, loop );
+							functionResponses.push( { functionResponse: { name: funcName, response: { result: `Changed to: ${args.style}` } } } );
+
+						} else if ( funcName === 'do_action' ) {
+
+							const duration = args.duration !== undefined ? args.duration : 5;
+							const loop = args.loop || false;
+							await playAction( args.action, duration, loop );
+							functionResponses.push( { functionResponse: { name: funcName, response: { result: `Action: ${args.action}` } } } );
+
+						} else if ( funcName === 'stop_action' ) {
+
+							stopAction();
+							stopWalking();
+							functionResponses.push( { functionResponse: { name: funcName, response: { result: 'Stopped' } } } );
+
+						} else if ( funcName === 'walk' ) {
+
+							const distance = args.distance || 3;
+							await walkTo( args.direction || 'forward', Math.min( distance, 10 ) );
+							functionResponses.push( { functionResponse: { name: funcName, response: { result: `Walking ${args.direction}` } } } );
+
+						}
+
+					}
+
+					// add model response and function results to history
+					chatHistory.push( candidate.content );
+					chatHistory.push( { role: 'user', parts: functionResponses } );
+
+					// get follow-up response
+					const followUp = await fetch( `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify( {
+							system_instruction: { parts: [{ text: systemInstruction }] },
+							contents: chatHistory.slice( -12 ),
+							generationConfig: {
+								maxOutputTokens: 200,
+								temperature: 0.8,
+							},
+						} ),
+					} );
+
+					if ( ! followUp.ok ) throw new Error( 'Gemini follow-up error' );
+
+					const followData = await followUp.json();
+					const reply = followData.candidates[ 0 ].content.parts[ 0 ].text;
+					chatHistory.push( { role: 'model', parts: [{ text: reply }] } );
+					return reply;
+
+				}
+
+				// no function call — normal text response
+				const reply = parts[ 0 ].text;
+				chatHistory.push( { role: 'model', parts: [{ text: reply }] } );
+				return reply;
+
+			}
+
+			// === ELEVENLABS TTS ===
+			async function speakWithElevenLabs( text ) {
+
+				const response = await fetch( `https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_LABS_VOICE_ID}`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'xi-api-key': ELEVEN_LABS_API_KEY,
+					},
+					body: JSON.stringify( {
+						text: text,
+						model_id: 'eleven_v3',
+						voice_settings: {
+							stability: 0.5,
+							similarity_boost: 0.75,
+						},
+					} ),
+				} );
+
+				if ( ! response.ok ) throw new Error( 'ElevenLabs TTS error: ' + response.status );
+
+				const audioBlob = await response.blob();
+				await playAudioWithAnalyser( audioBlob );
+
+			}
+
+			// === ELEVENLABS STT ===
+			let mediaRecorder = null;
+			let audioChunks = [];
+			let isRecording = false;
+
+			async function startRecording() {
+
+				const stream = await navigator.mediaDevices.getUserMedia( { audio: true } );
+				mediaRecorder = new MediaRecorder( stream, { mimeType: 'audio/webm' } );
+				audioChunks = [];
+
+				mediaRecorder.ondataavailable = ( e ) => {
+
+					if ( e.data.size > 0 ) audioChunks.push( e.data );
+
+				};
+
+				mediaRecorder.start();
+				isRecording = true;
+
+			}
+
+			async function stopRecording() {
+
+				return new Promise( ( resolve ) => {
+
+					mediaRecorder.onstop = async () => {
+
+						const audioBlob = new Blob( audioChunks, { type: 'audio/webm' } );
+						mediaRecorder.stream.getTracks().forEach( t => t.stop() );
+						isRecording = false;
+
+						// send to ElevenLabs STT
+						const formData = new FormData();
+						formData.append( 'file', audioBlob, 'audio.webm' );
+						formData.append( 'model_id', 'scribe_v1' );
+
+						try {
+
+							const response = await fetch( 'https://api.elevenlabs.io/v1/speech-to-text', {
+								method: 'POST',
+								headers: {
+									'xi-api-key': ELEVEN_LABS_API_KEY,
+								},
+								body: formData,
+							} );
+
+							if ( ! response.ok ) throw new Error( 'STT error' );
+
+							const data = await response.json();
+							resolve( data.text || '' );
+
+						} catch ( err ) {
+
+							console.error( 'STT error:', err );
+							resolve( '' );
+
+						}
+
+					};
+
+					mediaRecorder.stop();
+
+				} );
+
+			}
+
+			// === CHAT BOX ===
+			function addChatMessage( text, type ) {
+
+				const chatBox = document.getElementById( 'chatBox' );
+				const msg = document.createElement( 'div' );
+				msg.className = `chatMsg ${type}`;
+				msg.textContent = text;
+				chatBox.appendChild( msg );
+				chatBox.scrollTop = chatBox.scrollHeight;
+
+			}
+
+			// === ACTION SYSTEM ===
+			let isDancing = false;
+			let danceAction = null;
+			let idleAction = null;
+			let currentAudio = null;
+			let actionAction = null;
+			let isDoingAction = false;
+
+			const danceMap = {
+				samba: { fbx: './models/samba_dancing.fbx', music: './models/samba_music.mp3' },
+				gangnam: { fbx: './models/gangnam_style.fbx', music: './models/gangnam_style.mp3' },
+			};
+
+			const actionMap = {
+				idle: './models/standing_idle.fbx',
+				clap: './models/clapping.fbx',
+				wave: './models/waving.fbx',
+				sad: './models/sad_idle.fbx',
+				surprised: './models/surprised.fbx',
+				walk: './models/walking.fbx',
+			};
+
+			let danceTimeout = null;
+			let actionTimeout = null;
+
+			async function playAction( name, duration = 5, loop = false ) {
+
+				if ( ! currentVrm || ! currentMixer ) return;
+
+				const url = actionMap[ name ];
+				if ( ! url ) return;
+
+				if ( actionTimeout ) { clearTimeout( actionTimeout ); actionTimeout = null; }
+
+				const clip = await loadMixamoAnimation( url, currentVrm );
+				const newAction = currentMixer.clipAction( clip );
+				newAction.setLoop( loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1 );
+				newAction.clampWhenFinished = true;
+				newAction.reset().play();
+
+				if ( idleAction && ! isDoingAction && ! isDancing ) idleAction.crossFadeTo( newAction, 0.4, false );
+				if ( actionAction && actionAction !== newAction ) actionAction.crossFadeTo( newAction, 0.4, false );
+
+				actionAction = newAction;
+				isDoingAction = true;
+
+				if ( ! loop && duration > 0 ) {
+
+					actionTimeout = setTimeout( () => {
+
+						stopAction();
+
+					}, duration * 1000 );
+
+				}
+
+			}
+
+			function stopAction() {
+
+				if ( ! isDoingAction ) return;
+
+				if ( actionTimeout ) { clearTimeout( actionTimeout ); actionTimeout = null; }
+
+				if ( actionAction && idleAction ) {
+
+					actionAction.crossFadeTo( idleAction, 0.4, false );
+					idleAction.reset().play();
+
+				} else if ( actionAction ) {
+
+					actionAction.fadeOut( 0.4 );
+
+				}
+
+				actionAction = null;
+				isDoingAction = false;
+
+			}
+
+			// === WALKING SYSTEM ===
+			let isWalking = false;
+			let walkAction = null;
+			let walkClipCache = null;
+			let walkTarget = new THREE.Vector3();
+			let walkOrigin = new THREE.Vector3();
+			let walkDir = new THREE.Vector3();
+			let walkPhase = 'idle'; // 'going', 'pause', 'returning', 'idle'
+			let walkPauseTimer = 0;
+			const walkSpeed = 1.5;
+
+			// preload walk animation
+			let walkClipPromise = null;
+			function preloadWalkClip() {
+
+				if ( currentVrm ) {
+
+					walkClipPromise = loadMixamoAnimation( actionMap.walk, currentVrm ).then( clip => {
+
+						walkClipCache = clip;
+						return clip;
+
+					} ).catch( err => {
+
+						console.warn( 'Failed to preload walk:', err );
+						walkClipPromise = null;
+
+					} );
+
+				}
+
+				return walkClipPromise;
+
+			}
+
+			async function walkTo( direction, distance = 3 ) {
+
+				if ( ! currentVrm || ! currentMixer ) return;
+				if ( isWalking ) stopWalking();
+
+
+				isWalking = true;
+				walkPhase = 'going';
+				walkPauseTimer = 0;
+
+				// calculate target
+				const pos = currentVrm.scene.position;
+				walkOrigin.copy( pos );
+
+				const dirVectors = {
+					forward: new THREE.Vector3( 0, 0, -1 ),
+					backward: new THREE.Vector3( 0, 0, 1 ),
+					left: new THREE.Vector3( -1, 0, 0 ),
+					right: new THREE.Vector3( 1, 0, 0 ),
+				};
+
+				walkDir.copy( dirVectors[ direction ] || dirVectors.forward );
+				walkTarget.copy( walkOrigin ).addScaledVector( walkDir, distance );
+
+				// face direction
+				currentVrm.scene.rotation.y = Math.atan2( walkDir.x, walkDir.z );
+
+				// get walk clip (cached or load)
+				let clip = walkClipCache;
+				if ( ! clip ) {
+
+					await preloadWalkClip();
+					clip = walkClipCache;
+
+				}
+
+				if ( ! clip ) return;
+
+				// stop all other actions
+				if ( idleAction ) idleAction.fadeOut( 0.2 );
+
+				walkAction = currentMixer.clipAction( clip );
+				walkAction.setLoop( THREE.LoopRepeat, Infinity );
+				walkAction.reset().fadeIn( 0.2 ).play();
+
+			}
+
+			function updateWalking( deltaTime ) {
+
+				if ( ! isWalking || ! currentVrm ) return;
+
+				const pos = currentVrm.scene.position;
+
+				if ( walkPhase === 'going' ) {
+
+					const step = walkSpeed * deltaTime;
+					const dist = pos.distanceTo( walkTarget );
+
+					if ( dist <= step ) {
+
+						pos.copy( walkTarget );
+						walkPhase = 'pause';
+						walkPauseTimer = 1.0;
+
+					} else {
+
+						const moveDir = walkTarget.clone().sub( pos ).normalize();
+						pos.addScaledVector( moveDir, step );
+
+					}
+
+				} else if ( walkPhase === 'pause' ) {
+
+					walkPauseTimer -= deltaTime;
+					if ( walkPauseTimer <= 0 ) {
+
+						walkPhase = 'returning';
+						// face back
+						const returnDir = walkOrigin.clone().sub( pos ).normalize();
+						currentVrm.scene.rotation.y = Math.atan2( returnDir.x, returnDir.z );
+
+					}
+
+				} else if ( walkPhase === 'returning' ) {
+
+					const step = walkSpeed * deltaTime;
+					const dist = pos.distanceTo( walkOrigin );
+
+					if ( dist <= step ) {
+
+						pos.copy( walkOrigin );
+						currentVrm.scene.rotation.y = 0;
+						stopWalking();
+
+					} else {
+
+						const moveDir = walkOrigin.clone().sub( pos ).normalize();
+						pos.addScaledVector( moveDir, step );
+
+					}
+
+				}
+
+			}
+
+			function stopWalking() {
+
+				if ( ! isWalking ) return;
+
+				if ( walkAction ) {
+
+					walkAction.fadeOut( 0.3 );
+
+				}
+
+				if ( idleAction ) { idleAction.reset().fadeIn( 0.3 ).play(); }
+
+				walkAction = null;
+				isWalking = false;
+				walkPhase = 'idle';
+
+				// face forward
+				if ( currentVrm ) currentVrm.scene.rotation.y = 0;
+
+			}
+
+			async function startDance( name, duration = 15, loop = false ) {
+
+				if ( ! currentVrm || ! currentMixer ) return;
+
+				const dance = danceMap[ name ];
+				if ( ! dance ) return;
+
+				// clear previous dance timeout
+				if ( danceTimeout ) { clearTimeout( danceTimeout ); danceTimeout = null; }
+
+				const clip = await loadMixamoAnimation( dance.fbx, currentVrm );
+				const newAction = currentMixer.clipAction( clip );
+				newAction.setLoop( THREE.LoopRepeat, Infinity );
+				newAction.reset().play();
+
+				if ( idleAction && ! isDancing ) idleAction.crossFadeTo( newAction, 0.5, false );
+				if ( danceAction && danceAction !== newAction ) danceAction.crossFadeTo( newAction, 0.5, false );
+
+				danceAction = newAction;
+				isDancing = true;
+
+				// play music
+				if ( currentAudio ) { currentAudio.pause(); currentAudio = null; }
+				if ( dance.music ) {
+
+					currentAudio = new Audio( dance.music );
+					currentAudio.loop = true;
+					currentAudio.volume = 0.5;
+					currentAudio.play();
+
+				}
+
+				// auto-stop after duration (unless loop)
+				if ( ! loop && duration > 0 ) {
+
+					danceTimeout = setTimeout( () => {
+
+						stopDance();
+
+					}, duration * 1000 );
+
+				}
+
+			}
+
+			function stopDance() {
+
+				if ( ! isDancing ) return;
+
+				if ( danceTimeout ) { clearTimeout( danceTimeout ); danceTimeout = null; }
+				if ( currentAudio ) { currentAudio.pause(); currentAudio = null; }
+
+				if ( danceAction && idleAction ) {
+
+					danceAction.crossFadeTo( idleAction, 0.5, false );
+					idleAction.reset().play();
+
+				} else if ( danceAction ) {
+
+					danceAction.fadeOut( 0.5 );
+
+				}
+
+				danceAction = null;
+				isDancing = false;
+
+			}
+
+			// === MAIN TALK FLOW ===
+			async function handleUserMessage( text ) {
+
+				if ( ! text || isTalking ) return;
+
+				isTalking = true;
+				addChatMessage( text, 'user' );
+				showStatus( 'Thinking...' );
+
+
+				try {
+
+					// get LLM response (may trigger dance/stop/walk via tool calls)
+					const reply = await getGeminiResponse( text );
+
+					addChatMessage( reply, 'bot' );
+
+					showStatus( 'Speaking...' );
+
+					// always use talking animation when speaking
+					if ( ! isWalking && ! isDancing && ! isDoingAction ) {
+
+						const talkClip = await loadMixamoAnimation( './models/talking.fbx', currentVrm );
+						const talkAction = currentMixer.clipAction( talkClip );
+						talkAction.setLoop( THREE.LoopRepeat, Infinity );
+						talkAction.reset().fadeIn( 0.3 ).play();
+						if ( idleAction ) idleAction.fadeOut( 0.3 );
+
+						await speakWithElevenLabs( reply );
+
+						talkAction.fadeOut( 0.3 );
+						if ( idleAction ) { idleAction.reset().fadeIn( 0.3 ).play(); }
+
+					} else {
+
+						await speakWithElevenLabs( reply );
+
+					}
+
+				} catch ( error ) {
+
+					console.error( 'Error:', error );
+					addChatMessage( 'Oops, something went wrong...', 'bot' );
+
+				}
+
+				isTalking = false;
+				hideStatus();
+
+			}
+
+			// === EMOTION ===
+			function setEmotion( emotion ) {
+
+				if ( currentEmotion !== 'neutral' && currentVrm && currentVrm.expressionManager ) {
+
+					currentVrm.expressionManager.setValue( currentEmotion, 0 );
+
+				}
+
+				currentEmotion = emotion;
+				targetEmotionIntensity = 0.7;
+
+				setTimeout( () => {
+
+					targetEmotionIntensity = 0;
+					setTimeout( () => { currentEmotion = 'neutral'; }, 500 );
+
+				}, 3000 );
+
+			}
+
+			function updateEmotion( deltaTime ) {
+
+				if ( ! currentVrm || ! currentVrm.expressionManager ) return;
+
+				emotionIntensity += ( targetEmotionIntensity - emotionIntensity ) * deltaTime * 5;
+
+				if ( currentEmotion !== 'neutral' ) {
+
+					currentVrm.expressionManager.setValue( currentEmotion, emotionIntensity );
+
+				}
+
+			}
+
+
+			// === STATUS ===
+			function showStatus( text ) {
+
+				const el = document.getElementById( 'status' );
+				el.textContent = text;
+				el.style.display = 'block';
+
+			}
+
+			function hideStatus() {
+
+				document.getElementById( 'status' ).style.display = 'none';
+
+			}
+
+			// === RESIZE ===
+			window.addEventListener( 'resize', () => {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			} );
+
+			// === RENDER LOOP ===
+			const clock = new THREE.Clock();
+			clock.start();
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				const deltaTime = clock.getDelta();
+
+				if ( currentMixer ) currentMixer.update( deltaTime );
+
+				ball.position.y = 0.22 + 0.03 * Math.abs( Math.sin( clock.elapsedTime * 2.0 ) );
+
+				updateBlink( deltaTime );
+				updateLipSync( deltaTime );
+				updateEmotion( deltaTime );
+				updateWalking( deltaTime );
+
+				if ( currentVrm ) currentVrm.update( deltaTime );
+
+				renderer.render( scene, camera );
+
+			}
+
+			animate();
+
+			// === UI EVENTS ===
+			const chatInput = document.getElementById( 'chatInput' );
+			const sendBtn = document.getElementById( 'sendBtn' );
+			const micBtn = document.getElementById( 'micBtn' );
+
+			// send text
+			async function sendMessage() {
+
+				const text = chatInput.value.trim();
+				if ( text && ! isTalking ) {
+
+					chatInput.value = '';
+					await handleUserMessage( text );
+
+				}
+
+			}
+
+			sendBtn.addEventListener( 'click', () => { ensureAudioContext(); sendMessage(); } );
+			chatInput.addEventListener( 'keydown', ( e ) => {
+
+				if ( e.key === 'Enter' ) { ensureAudioContext(); sendMessage(); }
+
+			} );
+
+			// mic button — hold to record
+			micBtn.addEventListener( 'mousedown', async () => {
+
+				if ( isTalking ) return;
+				micBtn.classList.add( 'recording' );
+				showStatus( 'Listening...' );
+				await startRecording();
+
+			} );
+
+			micBtn.addEventListener( 'mouseup', async () => {
+
+				if ( ! isRecording ) return;
+				micBtn.classList.remove( 'recording' );
+				showStatus( 'Transcribing...' );
+
+				const text = await stopRecording();
+				if ( text ) {
+
+					chatInput.value = text;
+					await handleUserMessage( text );
+
+				} else {
+
+					hideStatus();
+
+				}
+
+			} );
+
+			micBtn.addEventListener( 'mouseleave', async () => {
+
+				if ( ! isRecording ) return;
+				micBtn.classList.remove( 'recording' );
+				showStatus( 'Transcribing...' );
+
+				const text = await stopRecording();
+				if ( text ) {
+
+					chatInput.value = text;
+					await handleUserMessage( text );
+
+				} else {
+
+					hideStatus();
+
+				}
+
+			} );
+
+		</script>
+	</body>
+</html>
